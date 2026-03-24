@@ -48,6 +48,8 @@ interface LogoConfig {
   padding: number;
   scale: number;
   opacity: number;
+  x?: number; // porcentagem 0-100
+  y?: number; // porcentagem 0-100
 }
 
 /* ── IndexedDB Helpers ────────────────────────────────────── */
@@ -134,6 +136,8 @@ export default function App() {
   const [exportDone, setExportDone] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
 
   /* Load State from DB */
   const hasLoadedFromDB = useRef(false);
@@ -282,6 +286,12 @@ export default function App() {
 
   /* logo transform */
   const getLogoTransform = (imgW: number, imgH: number, logoW: number, logoH: number, config: LogoConfig) => {
+    if (config.x !== undefined && config.y !== undefined) {
+      return {
+        x: (imgW - logoW) * (config.x / 100),
+        y: (imgH - logoH) * (config.y / 100)
+      };
+    }
     const pad = Math.min(imgW, imgH) * (config.padding / 100);
     let x = 0, y = 0;
     if (config.position.includes('L')) x = pad;
@@ -663,25 +673,122 @@ export default function App() {
     });
   };
 
-  /* Touch gestures for swipe (Mobile) */
-  const touchStartX = useRef<number | null>(null);
-
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
+  /* ── Interactive Drag ─────────────────────────────────── */
+  const getEventPos = (e: React.MouseEvent | React.TouchEvent | MouseEvent | TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
+    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    
+    // Proporção entre o tamanho visual e o real do canvas
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY
+    };
   };
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (touchStartX.current === null) return;
-    const touchEndX = e.changedTouches[0].clientX;
-    const diff = touchStartX.current - touchEndX;
+  const handleDragStart = (e: React.MouseEvent | React.TouchEvent) => {
+    if (!logo || images.length === 0 || !canvasRef.current) return;
+    const pos = getEventPos(e);
+    const currentImg = images[activeImageIndex];
+    if (!currentImg) return;
 
-    if (diff > 50) {
-      nextImage(); // swipe left -> next
-    } else if (diff < -50) {
-      prevImage(); // swipe right -> prev
+    const img = new Image();
+    img.src = currentImg.preview;
+    
+    // Precisamos saber as dimensões do logo para o hit test
+    const config = currentImg.isVertical ? configV : configH;
+    const logoImg = new Image();
+    logoImg.src = logo.preview;
+    
+    const logoAspect = logoImg.width / logoImg.height;
+    const logoWidth = img.width * (config.scale / 100);
+    const logoHeight = logoWidth / logoAspect;
+    const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
+
+    // Hit test
+    if (pos.x >= x && pos.x <= x + logoWidth && pos.y >= y && pos.y <= y + logoHeight) {
+      setIsDragging(true);
+      
+      // Salva porcentagens atuais se existirem, senão calcula baseada no transform default
+      const initialX = config.x !== undefined ? config.x : (x / (img.width - logoWidth)) * 100;
+      const initialY = config.y !== undefined ? config.y : (y / (img.height - logoHeight)) * 100;
+
+      dragRef.current = {
+        startX: pos.x,
+        startY: pos.y,
+        initialX,
+        initialY
+      };
+      
+      // Prevent scrolling on touch
+      if (e.cancelable) e.preventDefault();
     }
-    touchStartX.current = null;
   };
+
+  const handleDragMove = useCallback((e: MouseEvent | TouchEvent) => {
+    if (!isDragging || !canvasRef.current || images.length === 0 || !logo) return;
+    
+    const pos = getEventPos(e);
+    const currentImg = images[activeImageIndex];
+    const config = currentImg.isVertical ? configV : configH;
+    const setConfig = currentImg.isVertical ? setConfigV : setConfigH;
+
+    const img = new Image();
+    img.src = currentImg.preview;
+    const logoImg = new Image();
+    logoImg.src = logo.preview;
+    const logoAspect = logoImg.width / logoImg.height;
+    const logoWidth = img.width * (config.scale / 100);
+    const logoHeight = logoWidth / logoAspect;
+
+    const deltaX = pos.x - dragRef.current.startX;
+    const deltaY = pos.y - dragRef.current.startY;
+
+    // Converter delta em porcentagem de curso (imgWidth - logoWidth)
+    const availableW = img.width - logoWidth;
+    const availableH = img.height - logoHeight;
+    
+    const percDeltaX = (deltaX / availableW) * 100;
+    const percDeltaY = (deltaY / availableH) * 100;
+
+    let nextX = dragRef.current.initialX + percDeltaX;
+    let nextY = dragRef.current.initialY + percDeltaY;
+
+    // Constrain -50 to 150 (allows "hiding" transparent corners of a square PNG)
+    nextX = Math.max(-50, Math.min(150, nextX));
+    nextY = Math.max(-50, Math.min(150, nextY));
+
+    setConfig(prev => ({ ...prev, x: nextX, y: nextY }));
+  }, [isDragging, activeImageIndex, images, logo, configH, configV, setConfigH, setConfigV]);
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleDragMove);
+      window.addEventListener('mouseup', handleDragEnd);
+      window.addEventListener('touchmove', handleDragMove, { passive: false });
+      window.addEventListener('touchend', handleDragEnd);
+    } else {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleDragMove);
+      window.removeEventListener('mouseup', handleDragEnd);
+      window.removeEventListener('touchmove', handleDragMove);
+      window.removeEventListener('touchend', handleDragEnd);
+    };
+  }, [isDragging, handleDragMove]);
 
   /* ── Render ─────────────────────────────────────────────── */
   return (
@@ -1190,9 +1297,10 @@ export default function App() {
 
                 {/* Canvas */}
                 <div 
-                  className="editor-canvas-container"
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={handleTouchEnd}
+                  className={`editor-canvas-container ${isDragging ? 'is-dragging' : ''}`}
+                  onMouseDown={handleDragStart}
+                  onTouchStart={handleDragStart}
+                  style={{ cursor: isDragging ? 'grabbing' : undefined }}
                 >
                   {/* Nav arrows */}
                   {images.length > 1 && (
@@ -1354,8 +1462,8 @@ export default function App() {
                         <button
                           key={pos}
                           id={`pos-${pos}`}
-                          className={`pos-btn ${currentConfig.position === pos ? 'active' : ''}`}
-                          onClick={() => setConfig({ ...currentConfig, position: pos })}
+                          className={`pos-btn ${currentConfig.position === pos && currentConfig.x === undefined ? 'active' : ''}`}
+                          onClick={() => setConfig({ ...currentConfig, position: pos, x: undefined, y: undefined })}
                           title={pos}
                         >
                           <div className="pos-dot" />
