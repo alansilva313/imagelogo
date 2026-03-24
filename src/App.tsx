@@ -16,6 +16,7 @@ import {
   Zap,
   CheckCircle2,
   Sparkles,
+  X,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -102,6 +103,12 @@ export default function App() {
   const [savedImages, setSavedImages] = useState<SavedImage[]>([]); // últimos 7 dias
   const [allImages, setAllImages] = useState<SavedImage[]>([]);     // histórico completo
   const [liked, setLiked] = useState<Set<string>>(new Set());
+
+  const [previewModal, setPreviewModal] = useState<{ isOpen: boolean; items: SavedImage[]; currentIndex: number }>({
+    isOpen: false,
+    items: [],
+    currentIndex: 0
+  });
 
   // Função interna de logger (agora apenas pro console)
   const addLog = (msg: string, type: 'info' | 'error' | 'success' | 'warn' = 'info') => {
@@ -491,6 +498,38 @@ export default function App() {
     });
   };
 
+  const handleDeleteRecord = async (id: string, url: string) => {
+    if (!supabase) return;
+    try {
+      addLog(`🗑️ Iniciando exclusão...`, 'info');
+      
+      // Delete from storage
+      const fileName = decodeURIComponent(url.split('/').pop() || '');
+      if (fileName) {
+        await supabase.storage.from('processed').remove([fileName]);
+      }
+      
+      // Delete from database
+      const { error } = await supabase.from('logos').delete().eq('id', id);
+      if (error) throw error;
+      
+      addLog(`✅ Imagem excuída com sucesso!`, 'success');
+      
+      setSavedImages(prev => prev.filter(img => img.id !== id));
+      setAllImages(prev => prev.filter(img => img.id !== id));
+
+      if (previewModal.isOpen && previewModal.items.length === 1) {
+        setPreviewModal({ ...previewModal, isOpen: false });
+      } else if (previewModal.isOpen) {
+        const newItems = previewModal.items.filter(img => img.id !== id);
+        const newIdx = Math.min(previewModal.currentIndex, newItems.length - 1);
+        setPreviewModal({ isOpen: true, items: newItems, currentIndex: newIdx });
+      }
+    } catch (err: any) {
+      addLog(`❌ Erro ao excluir: ${err.message}`, 'error');
+    }
+  };
+
   /* Touch gestures for swipe (Mobile) */
   const touchStartX = useRef<number | null>(null);
 
@@ -676,6 +715,8 @@ export default function App() {
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.03, duration: 0.3 }}
                       className="history-row"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => setPreviewModal({ isOpen: true, items: allImages, currentIndex: i })}
                     >
                       {/* Thumb */}
                       <div style={{ width: 52, height: 52, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#06080f' }}>
@@ -705,12 +746,27 @@ export default function App() {
                       <a
                         href={img.url_publica}
                         download={img.nome}
-                        style={{ color: 'var(--text-muted)', display: 'flex', transition: 'color 0.18s', flexShrink: 0 }}
+                        style={{ color: 'var(--text-muted)', display: 'flex', transition: 'color 0.18s', flexShrink: 0, marginRight: 8 }}
                         title="Baixar"
                         className="download-link"
+                        onClick={e => e.stopPropagation()}
                       >
                         <Download size={16} />
                       </a>
+                      
+                      {/* Delete */}
+                      <button
+                        style={{ color: '#ef4444', display: 'flex', background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0 }}
+                        title="Excluir"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm("Gostaria de excluir permanentemente esta imagem?")) {
+                            handleDeleteRecord(img.id, img.url_publica);
+                          }
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </motion.div>
                   ))}
                 </div>
@@ -786,6 +842,7 @@ export default function App() {
                       initial={{ opacity: 0, y: 16 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.05, duration: 0.35 }}
+                      onClick={() => setPreviewModal({ isOpen: true, items: savedImages, currentIndex: i })}
                     >
                       <img src={img.url_publica} className="card-img" alt={img.nome} loading="lazy" />
 
@@ -796,17 +853,28 @@ export default function App() {
                       <div className="card-actions">
                         <button
                           className={`card-action-btn ${liked.has(img.id) ? 'active' : ''}`}
-                          onClick={() => toggleLike(img.id)}
+                          onClick={(e) => { e.stopPropagation(); toggleLike(img.id); }}
                           title="Favoritar"
                           style={liked.has(img.id) ? { background: 'rgba(239,68,68,0.8)', borderColor: 'transparent', color: '#fff' } : {}}
                         >
                           <Heart size={14} />
+                        </button>
+                        <button
+                          className="card-action-btn danger"
+                          onClick={(e) => { 
+                            e.stopPropagation(); 
+                            if(window.confirm("Excluir esta imagem definitivamente?")) handleDeleteRecord(img.id, img.url_publica); 
+                          }}
+                          title="Excluir"
+                        >
+                          <Trash2 size={14} />
                         </button>
                         <a
                           href={img.url_publica}
                           download={img.nome}
                           className="card-action-btn"
                           title="Baixar"
+                          onClick={(e) => e.stopPropagation()}
                         >
                           <Download size={14} />
                         </a>
@@ -825,6 +893,7 @@ export default function App() {
                             download={img.nome}
                             className="download-link"
                             title="Download"
+                            onClick={(e) => e.stopPropagation()}
                           >
                             <Download size={15} />
                           </a>
@@ -1171,6 +1240,99 @@ export default function App() {
                   ))}
                 </div>
               )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        
+        {/* Modal de Preview de Imagens */}
+        <AnimatePresence>
+          {previewModal.isOpen && previewModal.items.length > 0 && (
+            <motion.div
+              className="preview-modal-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setPreviewModal(prev => ({ ...prev, isOpen: false }))}
+            >
+              <div
+                className="preview-modal-content"
+                onClick={e => e.stopPropagation()}
+              >
+                <button
+                  className="preview-modal-close"
+                  onClick={() => setPreviewModal(prev => ({ ...prev, isOpen: false }))}
+                >
+                  <X size={24} />
+                </button>
+                <div className="preview-modal-image-container">
+                  <img
+                    src={previewModal.items[previewModal.currentIndex].url_publica}
+                    alt={previewModal.items[previewModal.currentIndex].nome}
+                    className="preview-modal-image"
+                  />
+                  {previewModal.items.length > 1 && (
+                    <>
+                      <button
+                        className="canvas-arrow left"
+                        style={{ position: 'fixed', left: 20 }}
+                        onClick={(e) => {
+                           e.stopPropagation();
+                           setPreviewModal(prev => ({
+                             ...prev,
+                             currentIndex: prev.currentIndex > 0 ? prev.currentIndex - 1 : prev.items.length - 1
+                           }))
+                        }}
+                      >
+                        <ChevronLeft size={32} />
+                      </button>
+                      <button
+                        className="canvas-arrow right"
+                        style={{ position: 'fixed', right: 20 }}
+                        onClick={(e) => {
+                           e.stopPropagation();
+                           setPreviewModal(prev => ({
+                             ...prev,
+                             currentIndex: prev.currentIndex < prev.items.length - 1 ? prev.currentIndex + 1 : 0
+                           }))
+                        }}
+                      >
+                        <ChevronRight size={32} />
+                      </button>
+                    </>
+                  )}
+                </div>
+                {/* Actions bottom bar */}
+                <div className="preview-modal-footer">
+                   <div style={{ color: '#fff', fontSize: 14 }}>
+                      {previewModal.items[previewModal.currentIndex].nome}
+                   </div>
+                   <div style={{ display: 'flex', gap: 10 }}>
+                     <a
+                       href={previewModal.items[previewModal.currentIndex].url_publica}
+                       download={previewModal.items[previewModal.currentIndex].nome}
+                       className="btn-secondary"
+                       style={{ 
+                         padding: '8px 16px', borderRadius: 8, background: 'rgba(255,255,255,0.1)', 
+                         color: '#fff', border: '1px solid rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', gap: 8, textDecoration: 'none' 
+                       }}
+                       title="Baixar"
+                     >
+                       <Download size={16} /> Baixar
+                     </a>
+                     <button
+                       className="btn-danger"
+                       style={{ padding: '8px 16px', borderRadius: 8, background: '#ef4444', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                       onClick={() => {
+                         if (window.confirm("Você tem certeza que deseja excluir esta imagem visualizada?")) {
+                           handleDeleteRecord(previewModal.items[previewModal.currentIndex].id, previewModal.items[previewModal.currentIndex].url_publica);
+                         }
+                       }}
+                     >
+                       <Trash2 size={16} /> Excluir
+                     </button>
+                   </div>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
