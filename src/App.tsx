@@ -67,13 +67,11 @@ export default function App() {
   const [allImages, setAllImages] = useState<SavedImage[]>([]);     // histórico completo
   const [liked, setLiked] = useState<Set<string>>(new Set());
 
-  // ✅ NOVO: Estado para logs de diagnóstico na tela
-  const [debugLogs, setDebugLogs] = useState<{ time: string, msg: string, type: 'info' | 'error' | 'success' | 'warn' }[]>([]);
-
+  // Função interna de logger (agora apenas pro console)
   const addLog = (msg: string, type: 'info' | 'error' | 'success' | 'warn' = 'info') => {
-    const time = new Date().toLocaleTimeString('pt-BR');
-    console.log(`[Supabase UI Log] ${time} - ${type.toUpperCase()}:`, msg);
-    setDebugLogs(prev => [...prev, { time, msg, type }]);
+    if (type === 'error') console.error(`[LogoImage]`, msg);
+    else if (type === 'warn') console.warn(`[LogoImage]`, msg);
+    else console.info(`[LogoImage]`, msg);
   };
 
   const [configH, setConfigH] = useState<LogoConfig>({ position: 'BR', padding: 5, scale: 15, opacity: 100 });
@@ -313,6 +311,64 @@ export default function App() {
   };
 
   /* controls */
+  const handleDownloadCurrent = async () => {
+    if (images.length === 0 || !logo || !canvasRef.current) return;
+    
+    // Configura o canvas de exportação para a imagem atual com qualidade nativa
+    const current = images[activeImageIndex];
+    const exportCanvas = document.createElement('canvas');
+    const ctx = exportCanvas.getContext('2d');
+    if (!ctx) return;
+
+    const logoImg = new Image();
+    logoImg.src = logo.preview;
+    await new Promise(r => (logoImg.onload = r));
+
+    const img = new Image();
+    img.src = current.preview;
+    await new Promise(r => (img.onload = r));
+
+    exportCanvas.width = img.width;
+    exportCanvas.height = img.height;
+    ctx.drawImage(img, 0, 0);
+
+    const config = current.isVertical ? configV : configH;
+    const logoAspect = logoImg.width / logoImg.height;
+    const logoWidth = img.width * (config.scale / 100);
+    const logoHeight = logoWidth / logoAspect;
+    const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
+
+    ctx.globalAlpha = config.opacity / 100;
+    ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
+    ctx.globalAlpha = 1.0;
+
+    exportCanvas.toBlob(async (blob) => {
+      if (!blob) return;
+      const fileName = `logoimage_${current.name}`;
+      const file = new File([blob], fileName, { type: 'image/png' });
+      
+      // API de Compartilhamento Nativa do Celular (Salvar na Galeria iOS/Android)
+      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: 'Imagem com Watermark',
+          });
+        } catch (e) {
+          console.log('Compartilhamento cancelado ou falhou', e);
+        }
+      } else {
+        // Fallback para download clássico
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
+        URL.revokeObjectURL(url);
+      }
+    }, 'image/png', 1.0);
+  };
+
   const removeImage = (index: number) => {
     setImages(prev => prev.filter((_, i) => i !== index));
     if (activeImageIndex >= images.length - 1 && images.length > 1) setActiveImageIndex(0);
@@ -497,16 +553,6 @@ export default function App() {
                       initial={{ opacity: 0, x: -12 }}
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.03, duration: 0.3 }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 16,
-                        padding: '14px 20px',
-                        background: 'var(--bg-card)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        transition: 'all 0.2s',
-                      }}
                       className="history-row"
                     >
                       {/* Thumb */}
@@ -529,7 +575,7 @@ export default function App() {
                       </div>
 
                       {/* Badge */}
-                      <span style={{ fontSize: '0.6875rem', fontWeight: 700, padding: '3px 10px', background: 'var(--primary-subtle)', color: 'var(--primary)', border: '1px solid var(--border-accent)', borderRadius: 6, letterSpacing: '0.06em', flexShrink: 0 }}>
+                      <span className="history-row-badge">
                         PNG
                       </span>
 
@@ -771,6 +817,18 @@ export default function App() {
                     </>
                   )}
 
+                  {/* Baixar Imagem Atual */}
+                  {images.length > 0 && logo && (
+                    <button
+                      id="canvas-download"
+                      className="canvas-download"
+                      onClick={handleDownloadCurrent}
+                      title="Salvar esta imagem (Galeria/Local)"
+                    >
+                      <Download size={15} />
+                    </button>
+                  )}
+
                   {/* Remove button */}
                   {images.length > 0 && (
                     <button
@@ -784,7 +842,7 @@ export default function App() {
                   )}
 
                   {/* Canvas */}
-                  <canvas ref={canvasRef} />
+                  <canvas ref={canvasRef} style={{ display: images.length === 0 ? 'none' : 'block' }} />
 
                   {/* Empty state */}
                   {images.length === 0 && (
@@ -967,31 +1025,6 @@ export default function App() {
                           : 'Aguardando imagens para processar'}
                       </p>
                     )}
-                  </div>
-
-                  {/* Terminal de Logs (Diagnóstico) */}
-                  <div style={{ marginTop: 24, background: '#06080f', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', padding: 16, display: 'flex', flexDirection: 'column', height: 200 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                      <span className="panel-section-title" style={{ margin: 0 }}>Terminal de Diagnóstico</span>
-                      <button onClick={() => setDebugLogs([])} style={{ fontSize: '0.6875rem', color: 'var(--text-muted)' }}>Limpar</button>
-                    </div>
-                    
-                    <div style={{ flex: 1, overflowY: 'auto', fontFamily: 'JetBrains Mono, Fira Code, monospace', fontSize: '0.6875rem', display: 'flex', flexDirection: 'column', gap: 6, paddingRight: 4 }}>
-                      {debugLogs.length === 0 ? (
-                        <div style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Aguardando operações no Supabase...</div>
-                      ) : (
-                        debugLogs.map((log, idx) => (
-                          <div key={idx} style={{ 
-                            color: log.type === 'error' ? '#ef4444' : log.type === 'success' ? '#22c55e' : log.type === 'warn' ? '#f59e0b' : 'var(--text-secondary)',
-                            lineHeight: 1.4,
-                            wordBreak: 'break-word'
-                          }}>
-                            <span style={{ opacity: 0.5, marginRight: 6 }}>[{log.time}]</span>
-                            {log.msg}
-                          </div>
-                        ))
-                      )}
-                    </div>
                   </div>
 
                 </aside>

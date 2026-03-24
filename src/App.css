@@ -366,6 +366,7 @@
   padding: 3px 10px;
   border-radius: 9999px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 /* ── Dashboard Gallery Grid ───────────────────────────────── */
@@ -695,7 +696,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  /* Fixed height so large-resolution images never blow out the layout */
+  /* Fixed height for desktop so images don't blow up */
   height: 520px;
   max-height: 520px;
   width: 100%;
@@ -1006,10 +1007,45 @@
 @media (max-width: 1200px) {
   .editor-layout {
     grid-template-columns: 1fr;
+    gap: 20px;
   }
   .editor-panel {
     position: static;
   }
+  
+  /* Mantém o canvas visível no topo da tela enquanto rola os controles */
+  .editor-canvas-container {
+    height: 45vh;
+    max-height: 400px;
+    position: sticky;
+    top: 70px;
+    z-index: 10;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+}
+
+/* ── History Row ──────────────────────────────────────────── */
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: all 0.2s;
+}
+
+.history-row-badge {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  border: 1px solid var(--border-accent);
+  border-radius: 6px;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
 }
 
 @media (max-width: 900px) {
@@ -1022,12 +1058,53 @@
   .stats-row {
     grid-template-columns: 1fr;
   }
+  .editor-canvas-container {
+    top: 20px;
+  }
 }
 
 @media (max-width: 680px) {
   .sidebar-panel { display: none; }
   .main-wrapper { margin-left: 0; }
-  .page-content { padding: 24px 20px; }
-  .top-nav { padding: 16px 20px; }
-  .file-manager { flex-direction: column; }
+  .page-content { padding: 16px 12px; }
+  .top-nav { 
+    flex-direction: column; 
+    align-items: flex-start; 
+    gap: 16px; 
+    padding: 16px 14px; 
+  }
+  .file-manager { flex-direction: row; gap: 8px; }
+  
+  .mini-drop { 
+    flex-direction: column; 
+    text-align: center; 
+    gap: 8px; 
+    padding: 14px 10px; 
+  }
+  .mini-drop-sub { display: none; }
+  .mini-drop-icon { margin: 0 auto; width: 34px; height: 34px; }
+  
+  .editor-canvas-container {
+    height: 40vh;
+    border-radius: var(--radius-md);
+  }
+
+  .editor-panel {
+    padding: 16px;
+  }
+
+  .history-row {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    gap: 12px;
+  }
+
+  .history-row-badge {
+    margin-left: auto;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 12px;
+  }
 }
