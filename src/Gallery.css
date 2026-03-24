@@ -1,0 +1,12 @@
+/* Gallery.css — legacy kept minimal, logic absorbed into App.css */
+
+@keyframes pulse-amber {
+  0%   { opacity: 0.7; }
+  50%  { opacity: 1; }
+  100% { opacity: 0.7; }
+}
+
+.notice-banner svg {
+  animation: pulse-amber 2.5s infinite;
+  flex-shrink: 0;
+}

@@ -1,0 +1,46 @@
+/* ── Position Grid ───────────────────────────────────────── */
+.position-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.pos-btn {
+  aspect-ratio: 1;
+  background: var(--bg-input);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.18s var(--ease-smooth);
+}
+
+.pos-btn:hover {
+  background: rgba(59,130,246,0.1);
+  border-color: var(--border-accent);
+}
+
+.pos-btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  box-shadow: 0 0 12px var(--primary-glow);
+}
+
+.pos-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  transition: all 0.18s var(--ease-smooth);
+}
+
+.pos-btn.active .pos-dot {
+  background: white;
+  transform: scale(1.4);
+}
+
+.pos-btn:hover:not(.active) .pos-dot {
+  background: var(--primary);
+}
