@@ -17,6 +17,7 @@ import {
   CheckCircle2,
   Sparkles,
   X,
+  FileX,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -74,6 +75,13 @@ function saveToDB(key: string, data: any) {
   }).catch(err => console.error('DB Save error', err));
 }
 
+function removeFromDB(key: string) {
+  initDB().then(db => {
+    const tx = db.transaction('editorState', 'readwrite');
+    tx.objectStore('editorState').delete(key);
+  }).catch(err => console.error('DB Remove error', err));
+}
+
 function loadFromDB(key: string): Promise<any> {
     return initDB().then(db => {
       return new Promise((resolve, reject) => {
@@ -103,6 +111,7 @@ export default function App() {
   const [savedImages, setSavedImages] = useState<SavedImage[]>([]); // últimos 7 dias
   const [allImages, setAllImages] = useState<SavedImage[]>([]);     // histórico completo
   const [liked, setLiked] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [previewModal, setPreviewModal] = useState<{ isOpen: boolean; items: SavedImage[]; currentIndex: number }>({
     isOpen: false,
@@ -183,7 +192,11 @@ export default function App() {
 
   useEffect(() => {
     if (!hasLoadedFromDB.current) return;
-    saveToDB('images', images.map(img => img.file));
+    if (images.length > 0) {
+      saveToDB('images', images.map(img => img.file));
+    } else {
+      removeFromDB('images');
+    }
   }, [images]);
 
   useEffect(() => {
@@ -363,52 +376,49 @@ export default function App() {
         exportCanvas.toBlob(resolve, 'image/png', 1.0)
       );
 
-      if (blob) {
-        const fileName = `processed_${Date.now()}_${current.name}`;
-        zip.file(current.name, blob);
+          const rawFileName = current.name.replace(/\.[^.]+$/, '');
+          const storageFileName = `${Date.now()}_${rawFileName}.png`;
 
-        // Upload/Save history only if requested
-        if (uploadToCloud) {
-          if (supabase) {
-            addLog(`📤 Iniciando upload no storage "processed": ${fileName}`, 'info');
+          if (blob) {
+            zip.file(current.name, blob);
 
-            // 1. Upload para o Storage
-          const { data: uploadData, error: uploadError } = await supabase.storage
-            .from('processed')
-            .upload(fileName, blob, { contentType: 'image/png', upsert: false });
+            // Upload/Save history only if requested
+            if (uploadToCloud) {
+              if (supabase) {
+                addLog(`📤 Iniciando upload no storage "processed": ${storageFileName}`, 'info');
 
-          if (uploadError) {
-            addLog(`❌ Erro no upload (storage): ${uploadError.message}`, 'error');
-            console.error('[Supabase] Falha Upload:', uploadError);
-          } else {
-            addLog(`✅ Arquivo salvo no storage: ${uploadData.path}`, 'success');
+                // 1. Upload para o Storage
+                const { data: uploadData, error: uploadError } = await supabase.storage
+                  .from('processed')
+                  .upload(storageFileName, blob, { contentType: 'image/png', upsert: false });
 
-            // 2. Gera URL pública
-            const { data: urlData } = supabase.storage
-              .from('processed')
-              .getPublicUrl(fileName);
-            const publicUrl = urlData.publicUrl;
+                if (uploadError) {
+                  addLog(`❌ Erro no upload (storage): ${uploadError.message}`, 'error');
+                } else {
+                  addLog(`✅ Arquivo salvo no storage: ${uploadData.path}`, 'success');
 
-            // 3. Insert na tabela logos
-            addLog(`📥 Salvando registro na tabela "logos"...`, 'info');
-            const { data: insertData, error: insertError } = await supabase
-              .from('logos')
-              .insert({ nome: current.name, url_publica: publicUrl })
-              .select();
+                  // 2. Gera URL pública
+                  const { data: urlData } = supabase.storage
+                    .from('processed')
+                    .getPublicUrl(storageFileName);
+                  const publicUrl = urlData.publicUrl;
 
-            if (insertError) {
-              addLog(`❌ Erro ao inserir na tabela: ${insertError.message}`, 'error');
-              console.error('[Supabase] Falha Insert:', insertError);
-            } else {
-              addLog(`✅ Histórico registrado com sucesso! (ID: ${insertData?.[0]?.id})`, 'success');
+                  // 3. Insert na tabela logos
+                  addLog(`📥 Salvando registro na tabela "logos"...`, 'info');
+                  const { data: insertData, error: insertError } = await supabase
+                    .from('logos')
+                    .insert({ nome: current.name, url_publica: publicUrl })
+                    .select();
+
+                  if (insertError) {
+                    addLog(`❌ Erro ao inserir na tabela: ${insertError.message}`, 'error');
+                  } else {
+                    addLog(`✅ Histórico registrado com sucesso!`, 'success');
+                  }
+                }
+              }
             }
           }
-        } else {
-          // Log if saving requested but supabase null
-          addLog('⚠️ Supabase não configurado. Download ZIP feito localmente.', 'warn');
-        }
-        }
-      }
       setProgress(Math.round(((i + 1) / images.length) * 100));
     }
 
@@ -508,20 +518,51 @@ export default function App() {
     });
   };
 
+  const handleClearEditor = () => {
+    if (images.length === 0) return;
+    if (window.confirm(`Deseja remover todas as ${images.length} imagens pendentes no editor?`)) {
+      setImages([]);
+      setActiveImageIndex(0);
+      addLog('🧹 Fila do editor limpa.', 'info');
+    }
+  };
+
+  const handleRemoveSingleEditorImage = (index: number) => {
+    setImages(prev => {
+        const next = [...prev];
+        next.splice(index, 1);
+        return next;
+    });
+    if (activeImageIndex >= images.length - 1 && activeImageIndex > 0) {
+        setActiveImageIndex(activeImageIndex - 1);
+    }
+  };
+
   const handleDeleteRecord = async (id: string, url: string) => {
     if (!supabase) return;
     try {
       addLog(`🗑️ Iniciando exclusão...`, 'info');
       
       // Delete from storage
-      const fileName = decodeURIComponent(url.split('/').pop() || '');
-      if (fileName) {
-        await supabase.storage.from('processed').remove([fileName]);
+      // O Supabase storage .remove() espera o CAMINHO relativo dentro do bucket.
+      let storagePath = '';
+      if (url.includes('/processed/')) {
+        storagePath = url.split('/processed/').pop()?.split('?')[0] || '';
+      }
+
+      if (storagePath) {
+        storagePath = decodeURIComponent(storagePath);
+        addLog(`📦 Removendo do storage: ${storagePath}`, 'info');
+        const { error: storageErr } = await supabase.storage.from('processed').remove([storagePath]);
+        if (storageErr) addLog(`⚠️ Aviso storage: ${storageErr.message}`, 'warn');
       }
       
       // Delete from database
-      const { error } = await supabase.from('logos').delete().eq('id', id);
+      const { data, error } = await supabase.from('logos').delete().eq('id', id).select();
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error("Permissão negada. É necessário criar uma política de DELETE na tabela 'logos' no painel RLS do Supabase.");
+      }
       
       addLog(`✅ Imagem excuída com sucesso!`, 'success');
       
@@ -538,6 +579,99 @@ export default function App() {
     } catch (err: any) {
       addLog(`❌ Erro ao excluir: ${err.message}`, 'error');
     }
+  };
+
+  const handleBatchDelete = async () => {
+    if (!supabase || selectedIds.size === 0) return;
+    if (!window.confirm(`Deseja excluir permanentemente ${selectedIds.size} itens selecionados?`)) return;
+
+    setIsProcessing(true);
+    const idsArray = Array.from(selectedIds);
+    let successCount = 0;
+
+    addLog(`批量 🗑️ Iniciando exclusão em lote de ${idsArray.length} itens...`, 'info');
+
+    for (const id of idsArray) {
+      const img = allImages.find(i => i.id === id);
+      if (img) {
+        try {
+          // Path do storage
+          let storagePath = '';
+          if (img.url_publica.includes('/processed/')) {
+            storagePath = img.url_publica.split('/processed/').pop()?.split('?')[0] || '';
+          }
+          
+          if (storagePath) {
+             storagePath = decodeURIComponent(storagePath);
+             await supabase.storage.from('processed').remove([storagePath]);
+          }
+          const { data, error } = await supabase.from('logos').delete().eq('id', id).select();
+          if (error) throw error;
+          if (!data || data.length === 0) {
+            throw new Error(`Permissão RLS Negada ao deletar item ${id}.`);
+          }
+          successCount++;
+          
+          // Confirma exclusão apenas dos removidos com sucesso
+          setSavedImages(prev => prev.filter(img => img.id !== id));
+          setAllImages(prev => prev.filter(img => img.id !== id));
+        } catch (e: any) {
+          console.error(`Erro ao deletar item ${id}:`, e);
+          addLog(`❌ Erro no item ${img.nome}: ${e.message}`, 'error');
+        }
+      }
+    }
+
+    // Updates outside the loop are removed since we now do it dynamically per item inside the loop
+    setSelectedIds(new Set());
+    setIsProcessing(false);
+    addLog(`✅ ${successCount} imagens excluídas com sucesso!`, 'success');
+  };
+
+  const handleClearRecent = async () => {
+    if (!supabase || savedImages.length === 0) return;
+    if (!window.confirm("Deseja limpar todos os processamentos recentes? (O histórico total será mantido)")) return;
+    
+    // Na verdade, no modelo atual 'savedImages' são apenas os registros dos últimos 7 dias.
+    // O usuário pediu "Limpar processamentos recentes", vamos limpar estes registros
+    setIsProcessing(true);
+    let count = 0;
+    for (const img of savedImages) {
+        try {
+             let storagePath = '';
+             if (img.url_publica.includes('/public/processed/')) {
+               storagePath = img.url_publica.split('/public/processed/').pop() || '';
+             } else {
+               storagePath = decodeURIComponent(img.url_publica.split('/').pop() || '');
+             }
+             if (storagePath) await supabase.storage.from('processed').remove([storagePath]);
+             const { data, error } = await supabase.from('logos').delete().eq('id', img.id).select();
+             if (error) throw error;
+             if (!data || data.length === 0) {
+               throw new Error("Permissão RLS Negada ou item já deletado.");
+             }
+             count++;
+             setSavedImages(prev => prev.filter(s => s.id !== img.id));
+             setAllImages(prev => prev.filter(s => s.id !== img.id));
+        } catch(e: any) {
+             addLog(`❌ Erro ao limpar item ${img.nome}: ${e.message}`, 'error');
+        }
+    }
+    // Atualizações dos arrays principais são feitas por item em sucesso
+    setIsProcessing(false);
+    if (count > 0) {
+      addLog(`✅ ${count} itens limpos da galeria recente.`, 'success');
+    } else {
+      addLog(`⚠️ Nenhum item foi limpo (verifique as permissões RLS no Supabase).`, 'warn');
+    }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   };
 
   /* Touch gestures for swipe (Mobile) */
@@ -636,7 +770,20 @@ export default function App() {
             </h1>
             <p className="page-subtitle">
               {view === 'dashboard' && `${savedImages.length} arquivo${savedImages.length !== 1 ? 's' : ''} processado${savedImages.length !== 1 ? 's' : ''} nos últimos 7 dias`}
-              {view === 'editor' && 'Adicione imagens e configure o watermark'}
+              {view === 'editor' && images.length > 0 ? (
+                 <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    Adicione imagens e configure o watermark
+                    <button 
+                      onClick={handleClearEditor}
+                      style={{ 
+                        background: 'rgba(239,68,68,0.1)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.2)',
+                        padding: '2px 8px', borderRadius: 4, fontSize: '0.7rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+                      }}
+                    >
+                       <FileX size={12} /> Limpar Editor
+                    </button>
+                 </span>
+              ) : (view === 'editor' && 'Adicione imagens e configure o watermark')}
               {view === 'history' && `${allImages.length} processamento${allImages.length !== 1 ? 's' : ''} no total`}
             </p>
           </div>
@@ -685,7 +832,7 @@ export default function App() {
               transition={{ duration: 0.3 }}
             >
               {/* Stats */}
-              <div className="stats-row" style={{ marginBottom: 28 }}>
+              <div className="stats-row" style={{ marginBottom: 20 }}>
                 <div className="stat-card">
                   <div className="stat-icon"><ImageIcon size={18} /></div>
                   <div className="stat-value">{allImages.length}</div>
@@ -707,6 +854,20 @@ export default function App() {
                 </div>
               </div>
 
+              {allImages.length > 0 && (
+                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16, gap: 10 }}>
+                    {selectedIds.size > 0 && (
+                       <button 
+                         className="btn-danger" 
+                         onClick={handleBatchDelete}
+                         style={{ padding: '8px 16px', borderRadius: 8, fontSize: '0.8125rem', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                        >
+                         <Trash2 size={14} /> Excluir Selecionados ({selectedIds.size})
+                       </button>
+                    )}
+                 </div>
+              )}
+
               {allImages.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-icon"><Clock size={28} /></div>
@@ -725,9 +886,24 @@ export default function App() {
                       animate={{ opacity: 1, x: 0 }}
                       transition={{ delay: i * 0.03, duration: 0.3 }}
                       className="history-row"
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer', background: selectedIds.has(img.id) ? 'rgba(59,130,246,0.05)' : undefined, borderColor: selectedIds.has(img.id) ? 'var(--primary)' : undefined }}
                       onClick={() => setPreviewModal({ isOpen: true, items: allImages, currentIndex: i })}
                     >
+                      {/* Selection Checkbox */}
+                      <div 
+                        style={{ display: 'flex', alignItems: 'center', paddingRight: 4 }}
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(img.id); }}
+                      >
+                         <div style={{ 
+                           width: 18, height: 18, borderRadius: 4, 
+                           border: `2px solid ${selectedIds.has(img.id) ? 'var(--primary)' : 'var(--border)'}`,
+                           background: selectedIds.has(img.id) ? 'var(--primary)' : 'transparent',
+                           display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s'
+                         }}>
+                            {selectedIds.has(img.id) && <CheckCircle2 size={12} color="#fff" />}
+                         </div>
+                      </div>
+
                       {/* Thumb */}
                       <div style={{ width: 52, height: 52, borderRadius: 8, overflow: 'hidden', flexShrink: 0, background: '#06080f' }}>
                         <img src={img.url_publica} alt={img.nome} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -816,9 +992,27 @@ export default function App() {
               {/* Section header */}
               <div className="section-header">
                 <h2 className="section-title">Processamentos Recentes</h2>
-                {savedImages.length > 0 && (
-                  <span className="section-count">{savedImages.length} imagens</span>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  {selectedIds.size > 0 ? (
+                    <button 
+                      className="btn-danger" 
+                      onClick={handleBatchDelete}
+                      style={{ padding: '6px 14px', borderRadius: 8, fontSize: '0.75rem', border: 'none', color: '#fff', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Trash2 size={14} /> Excluir ({selectedIds.size})
+                    </button>
+                  ) : savedImages.length > 0 && (
+                    <button 
+                      onClick={handleClearRecent}
+                      style={{ background: 'transparent', border: '1px solid var(--border)', padding: '6px 14px', borderRadius: 8, fontSize: '0.75rem', color: 'var(--text-muted)', cursor: 'pointer' }}
+                    >
+                      Limpar Recentes
+                    </button>
+                  )}
+                  {savedImages.length > 0 && (
+                    <span className="section-count">{savedImages.length} imagens</span>
+                  )}
+                </div>
               </div>
 
               {/* Grid */}
@@ -854,10 +1048,26 @@ export default function App() {
                       transition={{ delay: i * 0.05, duration: 0.35 }}
                       onClick={() => setPreviewModal({ isOpen: true, items: savedImages, currentIndex: i })}
                     >
+                      {/* Multi-select check on card */}
+                      <div 
+                        className="card-selection-check"
+                        style={{ 
+                          position: 'absolute', top: 14, left: 14, zIndex: 20, 
+                          width: 22, height: 22, borderRadius: 6,
+                          background: selectedIds.has(img.id) ? 'var(--primary)' : 'rgba(0,0,0,0.5)',
+                          border: `2px solid ${selectedIds.has(img.id) ? 'var(--primary)' : 'rgba(255,255,255,0.3)'}`,
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                          transition: 'all 0.2s', backdropFilter: 'blur(4px)'
+                        }}
+                        onClick={(e) => { e.stopPropagation(); toggleSelect(img.id); }}
+                      >
+                         {selectedIds.has(img.id) && <CheckCircle2 size={14} color="#fff" />}
+                      </div>
+
                       <img src={img.url_publica} className="card-img" alt={img.nome} loading="lazy" />
 
                       {/* Format tag */}
-                      <div className="card-tag">PNG</div>
+                      <div className="card-tag" style={{ left: 44 }}>PNG</div>
 
                       {/* Action buttons — visible on hover */}
                       <div className="card-actions">
