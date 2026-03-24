@@ -405,7 +405,7 @@ export default function App() {
 
                   // 3. Insert na tabela logos
                   addLog(`📥 Salvando registro na tabela "logos"...`, 'info');
-                  const { data: insertData, error: insertError } = await supabase
+                  const { error: insertError } = await supabase
                     .from('logos')
                     .insert({ nome: current.name, url_publica: publicUrl })
                     .select();
@@ -524,17 +524,6 @@ export default function App() {
       setImages([]);
       setActiveImageIndex(0);
       addLog('🧹 Fila do editor limpa.', 'info');
-    }
-  };
-
-  const handleRemoveSingleEditorImage = (index: number) => {
-    setImages(prev => {
-        const next = [...prev];
-        next.splice(index, 1);
-        return next;
-    });
-    if (activeImageIndex >= images.length - 1 && activeImageIndex > 0) {
-        setActiveImageIndex(activeImageIndex - 1);
     }
   };
 
