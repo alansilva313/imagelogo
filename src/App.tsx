@@ -18,13 +18,17 @@ import {
   Sparkles,
   X,
   FileX,
+  LogOut,
 } from 'lucide-react';
 import JSZip from 'jszip';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
+import { Auth } from './Auth';
 import './App.css';
 import './PositionGrid.css';
 import './Gallery.css';
+
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 /* ── Types ────────────────────────────────────────────────── */
 interface ImageFile {
@@ -114,6 +118,8 @@ export default function App() {
   const [allImages, setAllImages] = useState<SavedImage[]>([]);     // histórico completo
   const [liked, setLiked] = useState<Set<string>>(new Set());
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   const [previewModal, setPreviewModal] = useState<{ isOpen: boolean; items: SavedImage[]; currentIndex: number }>({
     isOpen: false,
@@ -139,6 +145,30 @@ export default function App() {
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef({ startX: 0, startY: 0, initialX: 0, initialY: 0 });
 
+  /* Auth State Listener */
+  useEffect(() => {
+    if (!supabase) return;
+    
+    // Check active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      setIsAuthLoading(false);
+    });
+
+    // Listen for changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const handleLogout = async () => {
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+  };
+
   /* Load State from DB */
   const hasLoadedFromDB = useRef(false);
 
@@ -157,10 +187,11 @@ export default function App() {
 
         if (savedLogo instanceof File) {
           const img = new Image();
-          img.src = URL.createObjectURL(savedLogo);
+          const logoUrl = URL.createObjectURL(savedLogo);
           img.onload = () => {
-            setLogo({ file: savedLogo, preview: img.src, name: savedLogo.name, isVertical: img.height > img.width });
+            setLogo({ file: savedLogo, preview: logoUrl, name: savedLogo.name, isVertical: img.height > img.width });
           };
+          img.src = logoUrl;
         }
 
         if (Array.isArray(savedImages) && savedImages.length > 0) {
@@ -168,9 +199,11 @@ export default function App() {
           for (const file of savedImages) {
              if (file instanceof File) {
                const img = new Image();
-               img.src = URL.createObjectURL(file);
-               await new Promise(r => { img.onload = r; });
-               loadedImages.push({ file, preview: img.src, name: file.name, isVertical: img.height > img.width });
+               const previewUrl = URL.createObjectURL(file);
+               const promise = new Promise(r => { img.onload = r; });
+               img.src = previewUrl;
+               await promise;
+               loadedImages.push({ file, preview: previewUrl, name: file.name, isVertical: img.height > img.width });
              }
           }
           if (loadedImages.length > 0) {
@@ -253,12 +286,13 @@ export default function App() {
   const onDropImages = useCallback((acceptedFiles: File[]) => {
     acceptedFiles.forEach(file => {
       const img = new Image();
-      img.src = URL.createObjectURL(file);
+      const previewUrl = URL.createObjectURL(file);
       img.onload = () => {
         const isVertical = img.height > img.width;
-        setImages(prev => [...prev, { file, preview: img.src, name: file.name, isVertical }]);
+        setImages(prev => [...prev, { file, preview: previewUrl, name: file.name, isVertical }]);
         if (view === 'dashboard') setView('editor');
       };
+      img.src = previewUrl;
     });
   }, [view]);
 
@@ -271,10 +305,11 @@ export default function App() {
     if (acceptedFiles[0]) {
       const file = acceptedFiles[0];
       const img = new Image();
-      img.src = URL.createObjectURL(file);
+      const previewUrl = URL.createObjectURL(file);
       img.onload = () => {
-        setLogo({ file, preview: img.src, name: file.name, isVertical: img.height > img.width });
+        setLogo({ file, preview: previewUrl, name: file.name, isVertical: img.height > img.width });
       };
+      img.src = previewUrl;
     }
   }, []);
 
@@ -311,8 +346,8 @@ export default function App() {
     if (!ctx) return;
     const currentImg = images[activeImageIndex];
     if (!currentImg) return;
+
     const img = new Image();
-    img.src = currentImg.preview;
     img.onload = () => {
       canvas.width = img.width;
       canvas.height = img.height;
@@ -325,7 +360,6 @@ export default function App() {
       
       if (logo) {
         const logoImg = new Image();
-        logoImg.src = logo.preview;
         logoImg.onload = () => {
           const config = currentImg.isVertical ? configV : configH;
           const logoAspect = logoImg.width / logoImg.height;
@@ -333,13 +367,15 @@ export default function App() {
           const logoHeight = logoWidth / logoAspect;
           const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
           
-          ctx.save(); // Salva estado do contexto
+          ctx.save(); 
           ctx.globalAlpha = config.opacity / 100;
           ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
-          ctx.restore(); // Restaura estado (reseta globalAlpha e outros)
+          ctx.restore(); 
         };
+        logoImg.src = logo.preview;
       }
     };
+    img.src = currentImg.preview;
   }, [images, logo, activeImageIndex, configH, configV, view]);
 
   useEffect(() => { renderPreview(); }, [renderPreview]);
@@ -844,12 +880,23 @@ export default function App() {
         </nav>
 
         {/* User */}
-        <div className="user-card">
-          <div className="user-avatar">L</div>
-          <div>
-            <div className="user-name">LogoImage Pro</div>
-            <span className="user-plan">Premium</span>
+        <div className="user-card" style={{ justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="user-avatar">{user?.user_metadata?.full_name?.[0] || user?.email?.[0]?.toUpperCase() || 'U'}</div>
+            <div>
+              <div className="user-name" style={{ maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.user_metadata?.full_name || 'Usuário'}
+              </div>
+              <span className="user-plan">Premium</span>
+            </div>
           </div>
+          <button 
+            onClick={handleLogout}
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', display: 'flex', padding: 4 }}
+            title="Sair"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </aside>
 
@@ -1270,7 +1317,22 @@ export default function App() {
                   <input {...getLogoInputProps()} />
                   {logo ? (
                     <>
-                      <img src={logo.preview} className="logo-thumb" alt="Logo" />
+                      <div style={{ position: 'relative' }}>
+                        <img src={logo.preview} className="logo-thumb" alt="Logo" />
+                        <button
+                          onClick={(e) => { e.stopPropagation(); setLogo(null); }}
+                          style={{
+                            position: 'absolute', top: -6, right: -6,
+                            width: 18, height: 18, borderRadius: '50%',
+                            background: '#ef4444', color: '#fff', border: 'none',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', zIndex: 10, boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                          }}
+                          title="Remover Logo"
+                        >
+                          <X size={10} />
+                        </button>
+                      </div>
                       <div>
                         <div className="mini-drop-label">Logo Ativa</div>
                         <div className="mini-drop-sub" style={{ color: 'var(--primary)', fontWeight: 600 }}>
@@ -1654,6 +1716,13 @@ export default function App() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* Auth Screen */}
+      <AnimatePresence>
+        {!user && !isAuthLoading && (
+          <Auth onSuccess={() => {}} />
+        )}
+      </AnimatePresence>
 
       {/* Spinner keyframes */}
       <style>{`
