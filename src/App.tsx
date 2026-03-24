@@ -293,8 +293,13 @@ export default function App() {
     img.onload = () => {
       canvas.width = img.width;
       canvas.height = img.height;
+      
+      // Limpa o canvas para garantir transparência total no fundo
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Desenha a imagem base
       ctx.drawImage(img, 0, 0);
+      
       if (logo) {
         const logoImg = new Image();
         logoImg.src = logo.preview;
@@ -304,9 +309,11 @@ export default function App() {
           const logoWidth = img.width * (config.scale / 100);
           const logoHeight = logoWidth / logoAspect;
           const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
+          
+          ctx.save(); // Salva estado do contexto
           ctx.globalAlpha = config.opacity / 100;
           ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
-          ctx.globalAlpha = 1.0;
+          ctx.restore(); // Restaura estado (reseta globalAlpha e outros)
         };
       }
     };
@@ -347,9 +354,10 @@ export default function App() {
       const logoHeight = logoWidth / logoAspect;
       const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
 
+      ctx.save();
       ctx.globalAlpha = config.opacity / 100;
       ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
-      ctx.globalAlpha = 1.0;
+      ctx.restore();
 
       const blob = await new Promise<Blob | null>(resolve =>
         exportCanvas.toBlob(resolve, 'image/png', 1.0)
@@ -439,6 +447,7 @@ export default function App() {
 
     exportCanvas.width = img.width;
     exportCanvas.height = img.height;
+    ctx.clearRect(0, 0, img.width, img.height);
     ctx.drawImage(img, 0, 0);
 
     const config = current.isVertical ? configV : configH;
@@ -447,9 +456,10 @@ export default function App() {
     const logoHeight = logoWidth / logoAspect;
     const { x, y } = getLogoTransform(img.width, img.height, logoWidth, logoHeight, config);
 
+    ctx.save();
     ctx.globalAlpha = config.opacity / 100;
     ctx.drawImage(logoImg, x, y, logoWidth, logoHeight);
-    ctx.globalAlpha = 1.0;
+    ctx.restore();
 
     exportCanvas.toBlob(async (blob) => {
       if (!blob) return;
