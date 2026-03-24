@@ -200,6 +200,7 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-width: 0;
 }
 
 /* ── Top Header ───────────────────────────────────────────── */
@@ -795,6 +796,35 @@
   box-shadow: 0 4px 12px rgba(239,68,68,0.4);
 }
 
+/* Download button over canvas */
+.canvas-download {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  background: rgba(59,130,246,0.15);
+  border: 1px solid rgba(59,130,246,0.2);
+  color: #3b82f6;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s var(--ease-smooth);
+}
+
+.editor-canvas-container:hover .canvas-download {
+  opacity: 1;
+}
+
+.canvas-download:hover {
+  background: #3b82f6;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(59,130,246,0.4);
+}
+
 /* Canvas empty overlay */
 .canvas-empty {
   display: flex;
@@ -1072,6 +1102,16 @@
     align-items: flex-start; 
     gap: 16px; 
     padding: 16px 14px; 
+  }
+  .top-nav-right {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .toggle-btn {
+    padding: 6px 12px;
+    font-size: 0.75rem;
   }
   .file-manager { flex-direction: row; gap: 8px; }
   

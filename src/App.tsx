@@ -48,6 +48,42 @@ interface LogoConfig {
   opacity: number;
 }
 
+/* ── IndexedDB Helpers ────────────────────────────────────── */
+const DB_NAME = 'LogoImageDB';
+const DB_VERSION = 1;
+
+function initDB(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = (e) => {
+      const db = (e.target as IDBOpenDBRequest).result;
+      if (!db.objectStoreNames.contains('editorState')) {
+        db.createObjectStore('editorState');
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function saveToDB(key: string, data: any) {
+  initDB().then(db => {
+    const tx = db.transaction('editorState', 'readwrite');
+    tx.objectStore('editorState').put(data, key);
+  }).catch(err => console.error('DB Save error', err));
+}
+
+function loadFromDB(key: string): Promise<any> {
+    return initDB().then(db => {
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction('editorState', 'readonly');
+        const req = tx.objectStore('editorState').get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    });
+}
+
 /* ── Helpers ──────────────────────────────────────────────── */
 function formatDate(iso: string) {
   return new Date(iso).toLocaleDateString('pt-BR', {
@@ -82,6 +118,72 @@ export default function App() {
   const [exportDone, setExportDone] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  /* Load State from DB */
+  const hasLoadedFromDB = useRef(false);
+
+  useEffect(() => {
+    const loadState = async () => {
+      try {
+        const savedConfigH = await loadFromDB('configH');
+        const savedConfigV = await loadFromDB('configV');
+        const savedOrientation = await loadFromDB('activeOrientation');
+        const savedLogo = await loadFromDB('logo');
+        const savedImages = await loadFromDB('images');
+
+        if (savedConfigH) setConfigH(savedConfigH);
+        if (savedConfigV) setConfigV(savedConfigV);
+        if (savedOrientation) setActiveOrientation(savedOrientation);
+
+        if (savedLogo instanceof File) {
+          const img = new Image();
+          img.src = URL.createObjectURL(savedLogo);
+          img.onload = () => {
+            setLogo({ file: savedLogo, preview: img.src, name: savedLogo.name, isVertical: img.height > img.width });
+          };
+        }
+
+        if (Array.isArray(savedImages) && savedImages.length > 0) {
+          const loadedImages: ImageFile[] = [];
+          for (const file of savedImages) {
+             if (file instanceof File) {
+               const img = new Image();
+               img.src = URL.createObjectURL(file);
+               await new Promise(r => { img.onload = r; });
+               loadedImages.push({ file, preview: img.src, name: file.name, isVertical: img.height > img.width });
+             }
+          }
+          if (loadedImages.length > 0) {
+            setImages(loadedImages);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load state from DB:", err);
+      } finally {
+        hasLoadedFromDB.current = true;
+      }
+    };
+    loadState();
+  }, []);
+
+  /* Save State to DB */
+  useEffect(() => {
+    if (!hasLoadedFromDB.current) return;
+    saveToDB('configH', configH);
+    saveToDB('configV', configV);
+    saveToDB('activeOrientation', activeOrientation);
+  }, [configH, configV, activeOrientation]);
+
+  useEffect(() => {
+    if (!hasLoadedFromDB.current) return;
+    saveToDB('images', images.map(img => img.file));
+  }, [images]);
+
+  useEffect(() => {
+    if (!hasLoadedFromDB.current) return;
+    if (logo) saveToDB('logo', logo.file);
+    else saveToDB('logo', null);
+  }, [logo]);
 
   /* fetch galeria — últimos 7 dias */
   const fetchGallery = useCallback(async () => {
@@ -387,6 +489,26 @@ export default function App() {
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
+  };
+
+  /* Touch gestures for swipe (Mobile) */
+  const touchStartX = useRef<number | null>(null);
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const diff = touchStartX.current - touchEndX;
+
+    if (diff > 50) {
+      nextImage(); // swipe left -> next
+    } else if (diff < -50) {
+      prevImage(); // swipe right -> prev
+    }
+    touchStartX.current = null;
   };
 
   /* ── Render ─────────────────────────────────────────────── */
@@ -789,7 +911,11 @@ export default function App() {
               <div className="editor-layout">
 
                 {/* Canvas */}
-                <div className="editor-canvas-container">
+                <div 
+                  className="editor-canvas-container"
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={handleTouchEnd}
+                >
                   {/* Nav arrows */}
                   {images.length > 1 && (
                     <>
